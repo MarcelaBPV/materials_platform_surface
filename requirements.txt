@@ -1,0 +1,8 @@
+streamlit
+supabase
+ramanchada2
+numpy
+pandas
+matplotlib
+scipy
+scikit-learn
