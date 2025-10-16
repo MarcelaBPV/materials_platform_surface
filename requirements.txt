@@ -1,8 +1,8 @@
-streamlit
-supabase
-ramanchada2
-numpy
+streamlit>=1.20
 pandas
+numpy
 matplotlib
 scipy
 scikit-learn
+supabase
+git+https://github.com/h2020charisma/ramanchada2.git@main#egg=ramanchada2
