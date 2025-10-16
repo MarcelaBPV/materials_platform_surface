@@ -99,27 +99,37 @@ with tab1:
 # -------------------------------------------------------
 with tab2:
     st.header("Importar e processar dados experimentais")
-    df_samples = load_samples()
-    if df_samples.empty:
-        st.warning("⚠️ Cadastre uma amostra primeiro.")
+
+    # Novo campo para nome da amostra
+    sample_name = st.text_input("Nome da amostra (cada arquivo corresponde a uma amostra)")
+
+    if not sample_name:
+        st.info("Digite o nome da amostra para prosseguir.")
     else:
-        sample_choice = st.selectbox("Selecione a amostra", df_samples["id"])
         tipo = st.radio("Tipo de experimento", ["Raman", "4 Pontas", "Ângulo de Contato"])
 
         # Upload de arquivo conforme tipo
         if tipo == "Raman":
-            uploaded_file = st.file_uploader("Carregar arquivo Raman (.xls)", type=["xls", "xlsx"])
+            uploaded_file = st.file_uploader("Carregar arquivo Raman (.xls ou .csv)", type=["xls", "xlsx", "csv"])
         elif tipo == "4 Pontas":
             uploaded_file = st.file_uploader("Carregar arquivo 4 Pontas (.csv)", type=["csv"])
         else:
             uploaded_file = st.file_uploader("Carregar arquivo Ângulo (.txt)", type=["txt", "log"])
 
         if uploaded_file:
+            # 1. Cadastrar amostra automaticamente se não existir
+            existing = supabase.table("samples").select("*").eq("sample_name", sample_name).execute().data
+            if existing:
+                sample_id = existing[0]["id"]
+            else:
+                resp = supabase.table("samples").insert({"sample_name": sample_name}).execute()
+                sample_id = resp.data[0]["id"]
+
+            # 2. Processar de acordo com o tipo
             try:
                 if tipo == "Raman":
-                    # Processamento Raman
                     result = process_raman(uploaded_file)
-                    mid = get_measurement_id(sample_choice, "raman")
+                    mid = get_measurement_id(sample_id, "raman")
                     rows = [
                         {"measurement_id": mid, "wavenumber_cm1": float(r["wavenumber_cm1"]), "intensity_a": float(r["intensity_a"])}
                         for _, r in result["df"].iterrows()
@@ -130,9 +140,8 @@ with tab2:
                     st.write("Picos:", result["peaks"])
 
                 elif tipo == "4 Pontas":
-                    # Processamento Resistividade
                     result = process_resistivity(uploaded_file)
-                    mid = get_measurement_id(sample_choice, "4_pontas")
+                    mid = get_measurement_id(sample_id, "4_pontas")
                     rows = [
                         {"measurement_id": mid, "current_a": float(r["current_a"]), "voltage_v": float(r["voltage_v"])}
                         for _, r in result["df"].iterrows()
@@ -143,9 +152,8 @@ with tab2:
                     st.write(result)
 
                 else:
-                    # Processamento Ângulo
                     result = process_contact_angle(uploaded_file)
-                    mid = get_measurement_id(sample_choice, "tensiometria")
+                    mid = get_measurement_id(sample_id, "tensiometria")
                     rows = [
                         {"measurement_id": mid,
                          "t_seconds": float(r["t_seconds"]),
