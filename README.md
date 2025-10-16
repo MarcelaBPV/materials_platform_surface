@@ -5,7 +5,7 @@ Plataforma de caracterização de materiais com módulos automáticos de otimiza
 - Resistividade (4 Pontas)
 - Tensiometria (Ângulo de contato)
 
-## Como rodar no Streamlit Cloud / GitHub
+# Como rodar no Streamlit Cloud / GitHub
 
 1. Suba o repositório no GitHub.
 2. Configure o app no [Streamlit Cloud](https://share.streamlit.io).
@@ -15,7 +15,7 @@ Plataforma de caracterização de materiais com módulos automáticos de otimiza
 streamlit run app.py
 ```
 
-## Estrutura dos módulos
+# Estrutura dos módulos
 
 - raman_processing.py → análise espectral avançada com RamanChada2.
 - resistivity_processing.py → cálculo de resistência, resistividade e condutividade.
