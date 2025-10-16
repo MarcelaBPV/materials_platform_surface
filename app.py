@@ -95,12 +95,12 @@ with tab1:
         st.dataframe(df_samples)
 
 # -------------------------------------------------------
-# Aba 2 - Técnicas de Análise
+# Aba 2 - Técnicas de Análise (com castração automática)
 # -------------------------------------------------------
 with tab2:
     st.header("Importar e processar dados experimentais")
 
-    # Novo campo para nome da amostra
+    # Campo para nome da amostra
     sample_name = st.text_input("Nome da amostra (cada arquivo corresponde a uma amostra)")
 
     if not sample_name:
@@ -114,10 +114,10 @@ with tab2:
         elif tipo == "4 Pontas":
             uploaded_file = st.file_uploader("Carregar arquivo 4 Pontas (.csv)", type=["csv"])
         else:
-            uploaded_file = st.file_uploader("Carregar arquivo Ângulo (.txt)", type=["txt", "log"])
+            uploaded_file = st.file_uploader("Carregar arquivo Ângulo (.txt ou .log)", type=["txt", "log"])
 
         if uploaded_file:
-            # 1. Cadastrar amostra automaticamente se não existir
+            # 1️⃣ Cadastrar amostra automaticamente se não existir
             existing = supabase.table("samples").select("*").eq("sample_name", sample_name).execute().data
             if existing:
                 sample_id = existing[0]["id"]
@@ -125,45 +125,59 @@ with tab2:
                 resp = supabase.table("samples").insert({"sample_name": sample_name}).execute()
                 sample_id = resp.data[0]["id"]
 
-            # 2. Processar de acordo com o tipo
             try:
+                # 2️⃣ Processar e castrar dados conforme tipo
                 if tipo == "Raman":
                     result = process_raman(uploaded_file)
+                    df = result["df"].dropna()  # Remove linhas com NaN
+                    df = df[df["intensity_a"] >= 0]  # Remove intensidades negativas
+
                     mid = get_measurement_id(sample_id, "raman")
                     rows = [
-                        {"measurement_id": mid, "wavenumber_cm1": float(r["wavenumber_cm1"]), "intensity_a": float(r["intensity_a"])}
-                        for _, r in result["df"].iterrows()
+                        {"measurement_id": mid,
+                         "wavenumber_cm1": float(r["wavenumber_cm1"]),
+                         "intensity_a": float(r["intensity_a"])}
+                        for _, r in df.iterrows()
                     ]
                     insert_rows("raman_spectra", rows)
-                    st.success(f"{len(rows)} pontos Raman importados.")
+                    st.success(f"{len(rows)} pontos Raman válidos importados.")
                     st.pyplot(result["figure"])
-                    st.write("Picos:", result["peaks"])
+                    st.write("Picos identificados:", result["peaks"])
 
                 elif tipo == "4 Pontas":
                     result = process_resistivity(uploaded_file)
+                    df = result["df"].dropna()
+                    df = df[(df["current_a"] > 0) & (df["voltage_v"] >= 0)]  # Castração
+
                     mid = get_measurement_id(sample_id, "4_pontas")
                     rows = [
-                        {"measurement_id": mid, "current_a": float(r["current_a"]), "voltage_v": float(r["voltage_v"])}
-                        for _, r in result["df"].iterrows()
+                        {"measurement_id": mid,
+                         "current_a": float(r["current_a"]),
+                         "voltage_v": float(r["voltage_v"])}
+                        for _, r in df.iterrows()
                     ]
                     insert_rows("four_point_probe_points", rows)
-                    st.success(f"{len(rows)} pontos 4 Pontas importados.")
+                    st.success(f"{len(rows)} pontos 4 Pontas válidos importados.")
                     st.pyplot(result["figure"])
                     st.write(result)
 
-                else:
+                else:  # Ângulo de Contato
                     result = process_contact_angle(uploaded_file)
+                    df = result["df"].dropna()
+                    df = df[(df["angle_mean_deg"] >= 0) & (df["angle_mean_deg"] <= 180)]  # Castração
+
                     mid = get_measurement_id(sample_id, "tensiometria")
                     rows = [
                         {"measurement_id": mid,
                          "t_seconds": float(r["t_seconds"]),
                          "angle_mean_deg": float(r["angle_mean_deg"])}
-                        for _, r in result["df"].iterrows()
+                        for _, r in df.iterrows()
                     ]
                     insert_rows("contact_angle_points", rows)
-                    st.success(f"{len(rows)} pontos de Ângulo importados.")
+                    st.success(f"{len(rows)} pontos de Ângulo válidos importados.")
                     st.pyplot(result["figure"])
                     st.write(result)
 
             except Exception as e:
                 st.error(f"❌ Erro ao importar ou processar arquivo: {e}")
+
