@@ -10,22 +10,34 @@ import ramanchada2 as rc2
 import pickle, io
 
 # -------------------------------------------------------
+
 # CONFIGURAÇÃO GERAL
+
 # -------------------------------------------------------
+
 st.set_page_config(page_title="Plataforma de Caracterização", layout="wide")
 st.title("🔬 Plataforma de Caracterização de Superfícies")
 
 # -------------------------------------------------------
+
 # CONEXÃO SUPABASE
+
 # -------------------------------------------------------
+
 @st.cache_resource
 def init_connection() -> Client:
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
+return create_client(url, key)
 
 supabase = init_connection()
 
+try:
+res = supabase.table("samples").select("id").limit(3).execute()
+st.sidebar.success("✅ Conectado ao Supabase!")
+except Exception as e:
+st.sidebar.error(f"Erro ao conectar Supabase: {e}")
+st.stop()
 
 # -------------------------------------------------------
 
@@ -116,7 +128,6 @@ st.header("📋 Cadastro e Visualização de Amostras")
 df_samples = load_samples()
 
 ```
-# Cadastro manual
 st.subheader("Cadastrar manualmente")
 new_name = st.text_input("Nome da amostra")
 new_desc = st.text_area("Descrição (opcional)")
@@ -130,7 +141,6 @@ if st.button("Cadastrar amostra individual"):
 
 st.divider()
 
-# Upload de arquivo de amostras
 st.subheader("📂 Importar lista de amostras (.csv, .xlsx, .txt)")
 uploaded = st.file_uploader("Selecione o arquivo de amostras", type=["csv", "xls", "xlsx", "txt"])
 
@@ -157,8 +167,6 @@ if uploaded:
         st.error(f"Erro ao ler arquivo: {e}")
 
 st.divider()
-
-# Exibe amostras cadastradas
 st.subheader("📋 Amostras existentes")
 if df_samples.empty:
     st.info("Nenhuma amostra encontrada.")
@@ -183,7 +191,6 @@ uploaded_file = st.file_uploader("📂 Carregar arquivo do ensaio", type=["txt",
 
 if uploaded_file and sample_name:
     try:
-        # Verifica/cria amostra
         existing = supabase.table("samples").select("id").eq("sample_name", sample_name).execute()
         if existing.data:
             sample_id = existing.data[0]["id"]
@@ -193,9 +200,7 @@ if uploaded_file and sample_name:
             sample_id = resp.data[0]["id"]
             st.success(f"Amostra **{sample_name}** criada com sucesso!")
 
-        # Raman
         if tipo == "Raman":
-            # Leitura
             name = uploaded_file.name.lower()
             if name.endswith(".xlsx") or name.endswith(".xls"):
                 df = pd.read_excel(uploaded_file)
@@ -231,7 +236,6 @@ if uploaded_file and sample_name:
             insert_rows("raman_spectra", rows)
             st.success(f"{len(rows)} pontos Raman vinculados à amostra '{sample_name}'.")
 
-        # 4 Pontas
         elif tipo == "4 Pontas":
             df = pd.read_csv(uploaded_file)
             df.columns = [c.lower().strip() for c in df.columns]
@@ -258,7 +262,6 @@ if uploaded_file and sample_name:
             insert_rows("four_point_probe_points", rows)
             st.success(f"{len(rows)} pontos 4 Pontas inseridos.")
 
-        # Ângulo de Contato
         elif tipo == "Ângulo de Contato":
             df = pd.read_csv(uploaded_file, sep=None, engine="python")
             df.columns = [c.lower().strip() for c in df.columns]
