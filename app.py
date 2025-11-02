@@ -88,47 +88,51 @@ with tab1:
 
     st.divider()
 
-    # --- Cadastro por arquivo ---
-    st.subheader("📂 Importar lista de amostras via arquivo (.csv, .xlsx ou .txt)")
-    uploaded = st.file_uploader("Selecione o arquivo", type=["csv", "xlsx", "txt"])
+  # --- Cadastro por arquivo ---
+st.subheader("📂 Importar lista de amostras (.csv, .xlsx ou .txt)")
+uploaded = st.file_uploader("Selecione o arquivo de amostras", type=["csv", "xlsx", "txt"])
 
-    if uploaded:
-        try:
-            if uploaded.name.endswith(".xlsx"):
-                df_new = pd.read_excel(uploaded)
-            elif uploaded.name.endswith(".csv"):
-                df_new = pd.read_csv(uploaded)
-            else:
-                df_new = pd.read_csv(uploaded, sep="\t", header=0)
+if uploaded:
+    try:
+        # Detecta o formato automaticamente
+        if uploaded.name.endswith(".xlsx"):
+            df_new = pd.read_excel(uploaded)
+        elif uploaded.name.endswith(".csv"):
+            df_new = pd.read_csv(uploaded)
+        elif uploaded.name.endswith(".txt"):
+            df_new = pd.read_csv(uploaded, sep="\t", header=0)
+        else:
+            st.error("❌ Formato de arquivo não suportado. Use .csv, .xlsx ou .txt.")
+            st.stop()
 
-            df_new.columns = [c.lower().strip() for c in df_new.columns]
-            if "sample_name" not in df_new.columns:
-                st.error("❌ O arquivo precisa conter uma coluna chamada 'sample_name'.")
-            else:
-                st.dataframe(df_new.head())
+        # Padroniza os nomes das colunas
+        df_new.columns = [c.lower().strip() for c in df_new.columns]
 
-                if st.button("Cadastrar amostras em lote"):
-                    inserted = 0
-                    for _, row in df_new.iterrows():
-                        payload = {"sample_name": str(row["sample_name"]).strip()}
-                        if "description" in row and not pd.isna(row["description"]):
-                            payload["description"] = str(row["description"])
-                        if "category_id" in row and not pd.isna(row["category_id"]):
-                            payload["category_id"] = int(row["category_id"])
+        if "sample_name" not in df_new.columns:
+            st.error("❌ O arquivo precisa conter uma coluna chamada 'sample_name'.")
+        else:
+            st.dataframe(df_new.head())
 
-                        try:
-                            supabase.table("samples").insert(payload).execute()
-                            inserted += 1
-                        except Exception as e:
-                            st.warning(f"Erro ao inserir '{payload['sample_name']}': {e}")
+            if st.button("Cadastrar amostras em lote"):
+                inserted = 0
+                for _, row in df_new.iterrows():
+                    payload = {"sample_name": str(row["sample_name"]).strip()}
+                    if "description" in df_new.columns and not pd.isna(row["description"]):
+                        payload["description"] = str(row["description"])
+                    if "category_id" in df_new.columns and not pd.isna(row["category_id"]):
+                        payload["category_id"] = int(row["category_id"])
 
-                    st.success(f"✅ {inserted} amostras cadastradas com sucesso!")
-                    df_samples = load_samples()
+                    try:
+                        supabase.table("samples").insert(payload).execute()
+                        inserted += 1
+                    except Exception as e:
+                        st.warning(f"Erro ao inserir '{payload['sample_name']}': {e}")
 
-        except Exception as e:
-            st.error(f"Erro ao ler arquivo: {e}")
+                st.success(f"✅ {inserted} amostras cadastradas com sucesso!")
+                df_samples = load_samples()
 
-    st.divider()
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo: {e}")
 
     # --- Exibir amostras cadastradas ---
     st.subheader("📋 Amostras existentes")
