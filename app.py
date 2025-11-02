@@ -164,25 +164,46 @@ with tab1:
 # ABA 2 - ENSAIOS
 # -------------------------------------------------------
 
+# -------------------------------------------------------
+# ABA 2 - ENSAIOS (atualizada com seletor de amostras)
+# -------------------------------------------------------
+
 with tab2:
     st.header("🧪 Processamento de Ensaios")
-    st.markdown("Informe o nome da amostra. Se não existir, será criada automaticamente no Supabase.")
+    st.markdown("Selecione uma amostra existente ou cadastre uma nova para associar o ensaio.")
 
-    sample_name = st.text_input("🔖 Nome da amostra (ex: BloodPaper_785_1200_1_5_10)")
+    # Carregar amostras existentes
+    df_samples = load_samples()
+
+    if not df_samples.empty:
+        sample_options = ["➕ Cadastrar nova amostra"] + df_samples["sample_name"].dropna().tolist()
+        selected_sample = st.selectbox("🔖 Escolha a amostra:", sample_options)
+
+        if selected_sample == "➕ Cadastrar nova amostra":
+            new_name = st.text_input("Nome da nova amostra")
+            new_desc = st.text_area("Descrição (opcional)")
+            if st.button("Salvar nova amostra"):
+                if new_name:
+                    insert_sample(new_name, new_desc)
+                    st.success(f"Amostra '{new_name}' criada com sucesso!")
+                    st.rerun()
+                else:
+                    st.warning("Informe um nome para a amostra.")
+            st.stop()
+        else:
+            sample_name = selected_sample
+            sample_id = int(df_samples[df_samples["sample_name"] == sample_name]["id"].values[0])
+            st.info(f"Amostra selecionada: **{sample_name}** (ID={sample_id})")
+    else:
+        st.warning("Nenhuma amostra cadastrada ainda. Vá até a aba **1️⃣ Amostras** para adicionar.")
+        st.stop()
+
+    # Tipo de ensaio
     tipo = st.radio("Tipo de ensaio:", ["Raman", "4 Pontas", "Ângulo de Contato"])
     uploaded_file = st.file_uploader("📂 Carregar arquivo do ensaio", type=["txt", "csv", "xls", "xlsx"])
 
-    if uploaded_file and sample_name:
+    if uploaded_file:
         try:
-            existing = supabase.table("samples").select("id").eq("sample_name", sample_name).execute()
-            if existing.data:
-                sample_id = existing.data[0]["id"]
-                st.info(f"Amostra **{sample_name}** já cadastrada (id={sample_id}).")
-            else:
-                resp = insert_sample(sample_name)
-                sample_id = resp.data[0]["id"]
-                st.success(f"Amostra **{sample_name}** criada com sucesso!")
-
             # --- ENSAIO RAMAN ---
             if tipo == "Raman":
                 name = uploaded_file.name.lower()
@@ -274,6 +295,7 @@ with tab2:
 
         except Exception as e:
             st.error(f"Erro ao processar arquivo: {e}")
+
 
 # -------------------------------------------------------
 # ABA 3 - OTIMIZAÇÃO (IA)
