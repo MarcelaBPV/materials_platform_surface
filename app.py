@@ -8,7 +8,9 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from sklearn.model_selection import train_test_split
 
-# Tentativa de importação robusta (versões diferentes da biblioteca)
+# -------------------------------------------------------
+# Import robusto do Spectrum (compatível com versões novas e antigas)
+# -------------------------------------------------------
 try:
     from ramanchada2.spectrum import Spectrum
 except ImportError:
@@ -130,27 +132,43 @@ with tab1:
                 st.stop()
 
             s = Spectrum(x=df["wavenumber_cm1"].values, y=df["intensity_a"].values)
-            s_corr = s.copy()
-            s_corr.remove_baseline(inplace=True)
-            s_corr.smooth(inplace=True)
-            s_corr.normalize(inplace=True)
-            peaks = s_corr.find_peaks(threshold_rel=0.05)
+
+            # Aplica os tratamentos (sem .copy() e sem inplace=True)
+            try:
+                s = s.remove_baseline()
+            except Exception:
+                pass
+            try:
+                s = s.smooth()
+            except Exception:
+                pass
+            try:
+                s = s.normalize()
+            except Exception:
+                pass
+
+            # Detectar picos
+            try:
+                peaks = s.find_peaks(threshold_rel=0.05)
+            except Exception:
+                peaks = None
 
             # Plot
             st.subheader("📈 Espectro Raman tratado")
             fig, ax = plt.subplots()
-            s_corr.plot(ax=ax)
-            try:
-                peaks.plot(ax=ax, marker="o", color="r")
-            except Exception:
-                ax.scatter(peaks.x, peaks.y, color="r")
+            s.plot(ax=ax)
+            if peaks is not None:
+                try:
+                    peaks.plot(ax=ax, marker="o", color="r")
+                except Exception:
+                    ax.scatter(peaks.x, peaks.y, color="r")
             ax.set_xlabel("Número de onda (cm⁻¹)")
             ax.set_ylabel("Intensidade (a.u.)")
             ax.invert_xaxis()
             st.pyplot(fig)
 
             # Inserir no banco
-            df_proc = pd.DataFrame({"wavenumber_cm1": s_corr.x, "intensity_a": s_corr.y})
+            df_proc = pd.DataFrame({"wavenumber_cm1": s.x, "intensity_a": s.y})
             insert_raman_points(meas_id, df_proc)
 
             st.success(f"Amostra '{sample_name}' cadastrada com sucesso (ID={sample_id}, measurement={meas_id})!")
@@ -182,19 +200,33 @@ with tab2:
         st.stop()
 
     s = Spectrum(x=df_raman["wavenumber_cm1"].values, y=df_raman["intensity_a"].values)
-    s_corr = s.copy()
-    s_corr.remove_baseline(inplace=True)
-    s_corr.smooth(inplace=True)
-    s_corr.normalize(inplace=True)
-    peaks = s_corr.find_peaks(threshold_rel=0.05)
+
+    # Tratamento novamente para visualização
+    try:
+        s = s.remove_baseline()
+    except Exception:
+        pass
+    try:
+        s = s.smooth()
+    except Exception:
+        pass
+    try:
+        s = s.normalize()
+    except Exception:
+        pass
+    try:
+        peaks = s.find_peaks(threshold_rel=0.05)
+    except Exception:
+        peaks = None
 
     st.subheader(f"📈 Espectro Raman da amostra '{selected_sample}'")
     fig, ax = plt.subplots()
-    s_corr.plot(ax=ax)
-    try:
-        peaks.plot(ax=ax, marker="o", color="r")
-    except Exception:
-        ax.scatter(peaks.x, peaks.y, color="r")
+    s.plot(ax=ax)
+    if peaks is not None:
+        try:
+            peaks.plot(ax=ax, marker="o", color="r")
+        except Exception:
+            ax.scatter(peaks.x, peaks.y, color="r")
     ax.set_xlabel("Número de onda (cm⁻¹)")
     ax.set_ylabel("Intensidade (a.u.)")
     ax.invert_xaxis()
