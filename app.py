@@ -205,41 +205,55 @@ with tab2:
     if uploaded_file:
         try:
             # --- ENSAIO RAMAN ---
-            if tipo == "Raman":
-                name = uploaded_file.name.lower()
-                if name.endswith(".xlsx") or name.endswith(".xls"):
-                    df = pd.read_excel(uploaded_file)
-                elif name.endswith(".csv"):
-                    df = pd.read_csv(uploaded_file)
-                else:
-                    df = pd.read_csv(uploaded_file, sep=None, engine="python")
+if tipo == "Raman":
+    name = uploaded_file.name.lower()
+    if name.endswith(".xlsx") or name.endswith(".xls"):
+        df = pd.read_excel(uploaded_file)
+    elif name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_csv(uploaded_file, sep=None, engine="python")
 
-                df.columns = [c.lower().strip() for c in df.columns]
-                if "wavenumber_cm1" not in df.columns and "wavenumber" in df.columns:
-                    df.rename(columns={"wavenumber": "wavenumber_cm1"}, inplace=True)
-                if "intensity_a" not in df.columns and "intensity" in df.columns:
-                    df.rename(columns={"intensity": "intensity_a"}, inplace=True)
+    df.columns = [c.lower().strip() for c in df.columns]
+    if "wavenumber_cm1" not in df.columns and "wavenumber" in df.columns:
+        df.rename(columns={"wavenumber": "wavenumber_cm1"}, inplace=True)
+    if "intensity_a" not in df.columns and "intensity" in df.columns:
+        df.rename(columns={"intensity": "intensity_a"}, inplace=True)
 
-                df = df.dropna(subset=["wavenumber_cm1", "intensity_a"])
-                df = df[df["intensity_a"] >= 0]
+    df = df.dropna(subset=["wavenumber_cm1", "intensity_a"])
+    df = df[df["intensity_a"] >= 0]
 
-                s = rc2.spectrum.from_array(df["wavenumber_cm1"].values, df["intensity_a"].values)
-                s_corr = s.remove_baseline().smooth().normalize()
-                peaks = s_corr.find_peaks(threshold_rel=0.05)
+    # ✅ Criação correta do espectro
+    s = rc2.Spectrum(x=df["wavenumber_cm1"].values, y=df["intensity_a"].values)
 
-                st.subheader("📈 Espectro Raman Normalizado")
-                fig, ax = plt.subplots()
-                s_corr.plot(ax=ax)
-                peaks.plot(ax=ax, marker="o", color="r")
-                ax.set_xlabel("Número de onda (cm⁻¹)")
-                ax.set_ylabel("Intensidade (a.u.)")
-                ax.invert_xaxis()
-                st.pyplot(fig)
+    # ✅ Pré-processamento completo (remove baseline, suaviza e normaliza)
+    s_corr = s.copy()
+    s_corr.remove_baseline(inplace=True)
+    s_corr.smooth(inplace=True)
+    s_corr.normalize(inplace=True)
 
-                mid = get_or_create_measurement(sample_id, "raman")
-                rows = [{"measurement_id": mid, "wavenumber_cm1": float(x), "intensity_a": float(y)} for x, y in zip(s_corr.x, s_corr.y)]
-                insert_rows("raman_spectra", rows)
-                st.success(f"{len(rows)} pontos Raman vinculados à amostra '{sample_name}'.")
+    # ✅ Detecção de picos
+    peaks = s_corr.find_peaks(threshold_rel=0.05)
+
+    # ✅ Plotagem
+    st.subheader("📈 Espectro Raman Normalizado")
+    fig, ax = plt.subplots()
+    s_corr.plot(ax=ax)
+    peaks.plot(ax=ax, marker="o", color="r")
+    ax.set_xlabel("Número de onda (cm⁻¹)")
+    ax.set_ylabel("Intensidade (a.u.)")
+    ax.invert_xaxis()
+    st.pyplot(fig)
+
+    # ✅ Inserção no Supabase
+    mid = get_or_create_measurement(sample_id, "raman")
+    rows = [
+        {"measurement_id": mid, "wavenumber_cm1": float(x), "intensity_a": float(y)}
+        for x, y in zip(s_corr.x, s_corr.y)
+    ]
+    insert_rows("raman_spectra", rows)
+    st.success(f"{len(rows)} pontos Raman vinculados à amostra '{sample_name}'.")
+
 
             # --- ENSAIO 4 PONTAS ---
             elif tipo == "4 Pontas":
