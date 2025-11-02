@@ -26,7 +26,6 @@ def init_connection() -> Client:
 
 supabase = init_connection()
 
-# Teste de conexão
 try:
     res = supabase.table("samples").select("*").limit(3).execute()
     st.sidebar.success(f"✅ Conectado ao Supabase ({len(res.data)} amostras encontradas)")
@@ -105,25 +104,33 @@ with tab2:
 
         if uploaded_file:
             try:
-                # Detecta formato
-                if uploaded_file.name.endswith(".txt"):
+                # Leitura universal
+                filename = uploaded_file.name
+                if filename.endswith(".xls") or filename.endswith(".xlsx"):
+                    df = pd.read_excel(uploaded_file)
+                elif filename.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
+                elif filename.endswith(".txt"):
                     df = pd.read_csv(uploaded_file, sep="\t", comment="#", names=["wavenumber_cm1", "intensity_a"], header=0)
                 else:
-                    df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith(".xls") else pd.read_csv(uploaded_file)
+                    raise ValueError("Formato não suportado. Use .txt, .csv, .xls ou .xlsx")
 
-                # Garante colunas corretas
+                # Padronização de colunas
                 df.columns = [c.lower().strip() for c in df.columns]
                 if "wavenumber_cm1" not in df.columns and "wavenumber" in df.columns:
                     df = df.rename(columns={"wavenumber": "wavenumber_cm1"})
                 if "intensity_a" not in df.columns and "intensity" in df.columns:
                     df = df.rename(columns={"intensity": "intensity_a"})
 
-                # Processa com Ramanchada2
+                df = df.dropna(subset=["wavenumber_cm1", "intensity_a"])
+                df = df[df["intensity_a"] >= 0]
+
+                # Processamento Ramanchada2
                 s = rc2.spectrum.from_array(df["wavenumber_cm1"].values, df["intensity_a"].values)
                 s_corr = s.remove_baseline().smooth().normalize()
                 peaks = s_corr.find_peaks(threshold_rel=0.05)
 
-                # Mostra dados
+                # Mostrar tabelas
                 st.subheader("📄 Dados originais")
                 st.dataframe(df.head())
 
@@ -131,23 +138,25 @@ with tab2:
                 st.subheader("📈 Dados normalizados")
                 st.dataframe(norm_df.head())
 
-                # Plota
+                # Gráfico
                 fig, ax = plt.subplots()
                 s_corr.plot(ax=ax, label="Normalizado")
                 peaks.plot(ax=ax, marker="o", color="r", label="Picos")
                 ax.set_xlabel("Número de onda (cm⁻¹)")
                 ax.set_ylabel("Intensidade (a.u.)")
                 ax.legend()
+                ax.invert_xaxis()  # Convenção Raman
+                fig.tight_layout()
                 st.pyplot(fig)
 
-                # Salva no Supabase
+                # Salvar no Supabase (normalizado)
                 mid = get_measurement_id(sample_id, "raman")
                 rows = [
                     {"measurement_id": mid, "wavenumber_cm1": float(x), "intensity_a": float(y)}
-                    for x, y in zip(df["wavenumber_cm1"], df["intensity_a"])
+                    for x, y in zip(s_corr.x, s_corr.y)
                 ]
                 insert_rows("raman_spectra", rows)
-                st.success(f"{len(rows)} pontos Raman importados com sucesso!")
+                st.success(f"{len(rows)} pontos Raman normalizados importados com sucesso!")
 
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
@@ -169,7 +178,7 @@ with tab3:
             y = df["intensity_a"].values
 
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            model = RandomForestRegressor(n_estimators=100, random_state=42)
+            model = RandomForestRegressor(n_estimators=200, random_state=42)
             model.fit(X_train, y_train)
             y_pred = model.predict(X_test)
 
@@ -191,7 +200,7 @@ with tab3:
             ax.legend()
             st.pyplot(fig)
 
-            # Identificação de grupos moleculares
+            # Picos e grupos moleculares
             st.subheader("🔬 Identificação de picos e grupos moleculares")
             known_groups = {
                 1000: "Fenilalanina (anel aromático)",
