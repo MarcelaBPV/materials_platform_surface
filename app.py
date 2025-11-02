@@ -8,6 +8,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from sklearn.model_selection import train_test_split
 import ramanchada2 as rc2
+import pickle, io
 
 # -------------------------------------------------------
 # CONFIGURAÇÃO GERAL
@@ -89,10 +90,10 @@ with tab1:
         st.dataframe(df_samples)
 
 # -------------------------------------------------------
-# ABA 2 - ENSAIOS RAMAN
+# ABA 2 - ENSAIOS (RAMAN, 4 PONTAS, ÂNGULO)
 # -------------------------------------------------------
 with tab2:
-    st.header("🧪 Processamento Raman com Ramanchada2")
+    st.header("🧪 Processamento de Ensaios")
 
     df_samples = load_samples()
     sample_options = df_samples["sample_name"].tolist()
@@ -100,83 +101,153 @@ with tab2:
 
     if selected_sample != "-- Selecione --":
         sample_id = df_samples.loc[df_samples["sample_name"] == selected_sample, "id"].values[0]
-        uploaded_file = st.file_uploader("Carregar arquivo Raman (.txt, .csv, .xls, .xlsx)", type=["txt", "csv", "xls", "xlsx"])
+        tipo = st.radio("Tipo de ensaio:", ["Raman", "4 Pontas", "Ângulo de Contato"])
 
+        uploaded_file = st.file_uploader("Carregar arquivo do ensaio", type=["txt", "csv", "xls", "xlsx"])
         if uploaded_file:
             try:
-                # Leitura universal
-                filename = uploaded_file.name
-                if filename.endswith(".xls") or filename.endswith(".xlsx"):
-                    df = pd.read_excel(uploaded_file)
-                elif filename.endswith(".csv"):
+                if tipo == "Raman":
+                    # --- Processamento Raman ---
+                    filename = uploaded_file.name
+                    if filename.endswith(".xls") or filename.endswith(".xlsx"):
+                        df = pd.read_excel(uploaded_file)
+                    elif filename.endswith(".csv"):
+                        df = pd.read_csv(uploaded_file)
+                    elif filename.endswith(".txt"):
+                        df = pd.read_csv(uploaded_file, sep="\t", comment="#", names=["wavenumber_cm1", "intensity_a"], header=0)
+                    else:
+                        raise ValueError("Formato não suportado.")
+
+                    df.columns = [c.lower().strip() for c in df.columns]
+                    if "wavenumber_cm1" not in df.columns and "wavenumber" in df.columns:
+                        df.rename(columns={"wavenumber": "wavenumber_cm1"}, inplace=True)
+                    if "intensity_a" not in df.columns and "intensity" in df.columns:
+                        df.rename(columns={"intensity": "intensity_a"}, inplace=True)
+
+                    df = df.dropna(subset=["wavenumber_cm1", "intensity_a"])
+                    df = df[df["intensity_a"] >= 0]
+
+                    s = rc2.spectrum.from_array(df["wavenumber_cm1"].values, df["intensity_a"].values)
+                    s_corr = s.remove_baseline().smooth().normalize()
+                    peaks = s_corr.find_peaks(threshold_rel=0.05)
+
+                    st.subheader("📄 Dados originais")
+                    st.dataframe(df.head())
+                    norm_df = pd.DataFrame({"wavenumber_cm1": s_corr.x, "normalized_intensity": s_corr.y})
+                    st.subheader("📈 Dados normalizados")
+                    st.dataframe(norm_df.head())
+
+                    fig, ax = plt.subplots()
+                    s_corr.plot(ax=ax, label="Normalizado")
+                    peaks.plot(ax=ax, marker="o", color="r", label="Picos")
+                    ax.set_xlabel("Número de onda (cm⁻¹)")
+                    ax.set_ylabel("Intensidade (a.u.)")
+                    ax.legend()
+                    ax.invert_xaxis()
+                    fig.tight_layout()
+                    st.pyplot(fig)
+
+                    mid = get_measurement_id(sample_id, "raman")
+                    rows = [
+                        {"measurement_id": mid, "wavenumber_cm1": float(x), "intensity_a": float(y)}
+                        for x, y in zip(s_corr.x, s_corr.y)
+                    ]
+                    insert_rows("raman_spectra", rows)
+                    st.success(f"{len(rows)} pontos Raman importados e normalizados!")
+
+                elif tipo == "4 Pontas":
+                    # --- Processamento Resistividade ---
                     df = pd.read_csv(uploaded_file)
-                elif filename.endswith(".txt"):
-                    df = pd.read_csv(uploaded_file, sep="\t", comment="#", names=["wavenumber_cm1", "intensity_a"], header=0)
-                else:
-                    raise ValueError("Formato não suportado. Use .txt, .csv, .xls ou .xlsx")
+                    df.columns = [c.lower().strip() for c in df.columns]
+                    if "current_a" not in df.columns:
+                        df.rename(columns={"corrente": "current_a"}, inplace=True)
+                    if "voltage_v" not in df.columns:
+                        df.rename(columns={"tensao": "voltage_v"}, inplace=True)
 
-                # Padronização de colunas
-                df.columns = [c.lower().strip() for c in df.columns]
-                if "wavenumber_cm1" not in df.columns and "wavenumber" in df.columns:
-                    df = df.rename(columns={"wavenumber": "wavenumber_cm1"})
-                if "intensity_a" not in df.columns and "intensity" in df.columns:
-                    df = df.rename(columns={"intensity": "intensity_a"})
+                    df = df.dropna(subset=["current_a", "voltage_v"])
+                    df = df[(df["current_a"] > 0) & (df["voltage_v"] >= 0)]
 
-                df = df.dropna(subset=["wavenumber_cm1", "intensity_a"])
-                df = df[df["intensity_a"] >= 0]
+                    # Cálculo da resistência média
+                    df["resistance_ohm"] = df["voltage_v"] / df["current_a"]
+                    R_med = df["resistance_ohm"].mean()
 
-                # Processamento Ramanchada2
-                s = rc2.spectrum.from_array(df["wavenumber_cm1"].values, df["intensity_a"].values)
-                s_corr = s.remove_baseline().smooth().normalize()
-                peaks = s_corr.find_peaks(threshold_rel=0.05)
+                    fig, ax = plt.subplots()
+                    ax.scatter(df["current_a"], df["voltage_v"], label="Dados experimentais")
+                    ax.plot(df["current_a"], df["current_a"] * R_med, "r-", label=f"Ajuste linear (R={R_med:.2f} Ω)")
+                    ax.set_xlabel("Corrente (A)")
+                    ax.set_ylabel("Tensão (V)")
+                    ax.legend()
+                    st.pyplot(fig)
 
-                # Mostrar tabelas
-                st.subheader("📄 Dados originais")
-                st.dataframe(df.head())
+                    mid = get_measurement_id(sample_id, "4_pontas")
+                    rows = df.to_dict(orient="records")
+                    for r in rows:
+                        r["measurement_id"] = mid
+                    insert_rows("four_point_probe_points", rows)
+                    st.success(f"{len(rows)} pontos 4 Pontas cadastrados!")
 
-                norm_df = pd.DataFrame({"wavenumber_cm1": s_corr.x, "normalized_intensity": s_corr.y})
-                st.subheader("📈 Dados normalizados")
-                st.dataframe(norm_df.head())
+                elif tipo == "Ângulo de Contato":
+                    # --- Processamento Tensiometria ---
+                    df = pd.read_csv(uploaded_file, delim_whitespace=True, comment="#")
+                    df.columns = [c.lower().strip() for c in df.columns]
+                    if "mean" in df.columns:
+                        df.rename(columns={"mean": "angle_mean_deg"}, inplace=True)
+                    if "time" in df.columns:
+                        df.rename(columns={"time": "t_seconds"}, inplace=True)
 
-                # Gráfico
-                fig, ax = plt.subplots()
-                s_corr.plot(ax=ax, label="Normalizado")
-                peaks.plot(ax=ax, marker="o", color="r", label="Picos")
-                ax.set_xlabel("Número de onda (cm⁻¹)")
-                ax.set_ylabel("Intensidade (a.u.)")
-                ax.legend()
-                ax.invert_xaxis()  # Convenção Raman
-                fig.tight_layout()
-                st.pyplot(fig)
+                    df = df.dropna(subset=["t_seconds", "angle_mean_deg"])
+                    df = df[(df["angle_mean_deg"] >= 0) & (df["angle_mean_deg"] <= 180)]
 
-                # Salvar no Supabase (normalizado)
-                mid = get_measurement_id(sample_id, "raman")
-                rows = [
-                    {"measurement_id": mid, "wavenumber_cm1": float(x), "intensity_a": float(y)}
-                    for x, y in zip(s_corr.x, s_corr.y)
-                ]
-                insert_rows("raman_spectra", rows)
-                st.success(f"{len(rows)} pontos Raman normalizados importados com sucesso!")
+                    fig, ax = plt.subplots()
+                    ax.plot(df["t_seconds"], df["angle_mean_deg"], "bo-", label="Ângulo de contato")
+                    ax.set_xlabel("Tempo (s)")
+                    ax.set_ylabel("Ângulo (°)")
+                    ax.legend()
+                    st.pyplot(fig)
+
+                    mid = get_measurement_id(sample_id, "tensiometria")
+                    rows = df.to_dict(orient="records")
+                    for r in rows:
+                        r["measurement_id"] = mid
+                    insert_rows("contact_angle_points", rows)
+                    st.success(f"{len(rows)} pontos de ângulo de contato cadastrados!")
 
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
 
 # -------------------------------------------------------
-# ABA 3 - OTIMIZAÇÃO (IA)
+# ABA 3 - OTIMIZAÇÃO (IA) - APENAS RAMAN
 # -------------------------------------------------------
 with tab3:
     st.header("🤖 Otimização via Machine Learning (Random Forest)")
-    st.markdown("Treina um modelo IA para aprender padrões de intensidades e identificar picos característicos.")
+    st.markdown("Treina um modelo IA apenas para **Raman**, aprendendo padrões e criando uma assinatura molecular.")
+
+    model_path = "models/raman_model.pkl"
 
     try:
         data = supabase.table("raman_spectra").select("wavenumber_cm1, intensity_a").execute()
         if not data.data:
             st.warning("Nenhum dado Raman disponível.")
-        else:
-            df = pd.DataFrame(data.data).dropna()
-            X = df[["wavenumber_cm1"]].values
-            y = df["intensity_a"].values
+            st.stop()
 
+        df = pd.DataFrame(data.data).dropna()
+        X = df[["wavenumber_cm1"]].values
+        y = df["intensity_a"].values
+
+        # Verifica modelo salvo
+        model_exists = False
+        try:
+            res = supabase.storage.from_("models").download("raman_model.pkl")
+            model_file = io.BytesIO(res)
+            model = pickle.load(model_file)
+            model_exists = True
+            st.success("📦 Modelo carregado do Supabase Storage!")
+        except Exception:
+            st.info("Nenhum modelo salvo encontrado. Será treinado um novo.")
+
+        retrain = st.button("🔁 Re-treinar modelo IA")
+
+        if retrain or not model_exists:
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
             model = RandomForestRegressor(n_estimators=200, random_state=42)
             model.fit(X_train, y_train)
@@ -191,32 +262,36 @@ with tab3:
             st.write(f"**MAE:** {mae:.3f}")
             st.write(f"**RMSE:** {rmse:.3f}")
 
-            # Gráfico real vs previsto
-            fig, ax = plt.subplots()
-            ax.scatter(X_test, y_test, label="Real", s=20)
-            ax.scatter(X_test, y_pred, label="Previsto", alpha=0.6)
-            ax.set_xlabel("Número de onda (cm⁻¹)")
-            ax.set_ylabel("Intensidade (a.u.)")
-            ax.legend()
-            st.pyplot(fig)
+            buf = io.BytesIO()
+            pickle.dump(model, buf)
+            buf.seek(0)
+            supabase.storage.from_("models").upload("raman_model.pkl", buf, {"content-type": "application/octet-stream"})
+            st.info("💾 Modelo salvo no Supabase Storage!")
 
-            # Picos e grupos moleculares
-            st.subheader("🔬 Identificação de picos e grupos moleculares")
-            known_groups = {
-                1000: "Fenilalanina (anel aromático)",
-                1250: "Amidas (proteínas)",
-                1600: "C=C (lipídios)",
-                1650: "Amida I (proteína)"
-            }
+        # Previsão manual
+        st.subheader("🔍 Prever intensidade Raman")
+        wnum = st.number_input("Digite número de onda (cm⁻¹):", min_value=0.0, step=10.0)
+        if st.button("Prever intensidade"):
+            pred = model.predict(np.array([[wnum]]))[0]
+            st.info(f"Intensidade prevista: **{pred:.2f} a.u.**")
 
-            detected_peaks = df.loc[df["intensity_a"] > np.percentile(df["intensity_a"], 98), "wavenumber_cm1"].round().unique()
-            detected_peaks.sort()
-            result_table = []
-            for p in detected_peaks:
-                group = known_groups.get(int(p), "Desconhecido")
-                result_table.append({"Pico (cm⁻¹)": p, "Grupo Molecular": group})
+        # Identificação molecular
+        st.subheader("🔬 Picos e grupos moleculares")
+        known_groups = {
+            1000: "Fenilalanina (anel aromático)",
+            1250: "Amidas (proteínas)",
+            1600: "C=C (lipídios)",
+            1650: "Amida I (proteína)"
+        }
 
-            st.dataframe(pd.DataFrame(result_table))
+        detected_peaks = df.loc[df["intensity_a"] > np.percentile(df["intensity_a"], 98), "wavenumber_cm1"].round().unique()
+        detected_peaks.sort()
+        result_table = []
+        for p in detected_peaks:
+            group = known_groups.get(int(p), "Desconhecido")
+            result_table.append({"Pico (cm⁻¹)": p, "Grupo Molecular": group})
+
+        st.dataframe(pd.DataFrame(result_table))
 
     except Exception as e:
         st.error(f"Erro na otimização: {e}")
