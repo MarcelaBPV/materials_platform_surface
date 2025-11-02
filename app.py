@@ -44,10 +44,15 @@ def load_samples():
         return pd.DataFrame(columns=["id", "sample_name", "description", "created_at"])
     return pd.DataFrame(data.data)
 
-def insert_sample(name, desc=None):
-    payload = {"sample_name": name}
-    if desc:
-        payload["description"] = desc
+def insert_sample(name, desc=None, category_id=None):
+    payload = {"sample_name": str(name).strip()}
+    if desc and not pd.isna(desc):
+        payload["description"] = str(desc)
+    if category_id is not None and not pd.isna(category_id):
+        try:
+            payload["category_id"] = int(category_id)
+        except Exception:
+            pass
     supabase.table("samples").insert(payload).execute()
 
 def get_measurement_id(sample_id, exp_type):
@@ -63,15 +68,69 @@ def insert_rows(table, rows):
     supabase.table(table).insert(rows).execute()
     return len(rows)
 
+def read_samples_file(uploaded) -> pd.DataFrame:
+    """
+    Lê arquivo de amostras em .csv, .xlsx/.xls ou .txt (tab/;/, autodetect),
+    padroniza colunas para: sample_name, description, category_id
+    """
+    name = uploaded.name.lower()
+    if name.endswith(".xlsx") or name.endswith(".xls"):
+        df = pd.read_excel(uploaded)
+    elif name.endswith(".csv"):
+        # autodetect de separador (',' ou ';')
+        try:
+            df = pd.read_csv(uploaded)
+        except Exception:
+            df = pd.read_csv(uploaded, sep=";")
+    elif name.endswith(".txt"):
+        # tenta autodetectar (tab, vírgula, ponto e vírgula)
+        try:
+            df = pd.read_csv(uploaded, sep=None, engine="python")
+        except Exception:
+            # fallback comum de arquivos exportados por instrumentos (tab)
+            df = pd.read_csv(uploaded, sep="\t", header=0)
+    else:
+        raise ValueError("Formato não suportado. Use .csv, .xlsx/.xls ou .txt")
+
+    # padroniza nomes de colunas
+    df.columns = [c.lower().strip() for c in df.columns]
+
+    # mapeamentos comuns
+    colmap = {}
+    if "nome" in df.columns and "sample_name" not in df.columns:
+        colmap["nome"] = "sample_name"
+    if "descricao" in df.columns and "description" not in df.columns:
+        colmap["descricao"] = "description"
+    if "categoria" in df.columns and "category_id" not in df.columns:
+        colmap["categoria"] = "category_id"
+    df.rename(columns=colmap, inplace=True)
+
+    # exige sample_name
+    if "sample_name" not in df.columns:
+        raise ValueError("O arquivo precisa ter a coluna 'sample_name'.")
+
+    # garante colunas opcionais
+    if "description" not in df.columns:
+        df["description"] = None
+    if "category_id" not in df.columns:
+        df["category_id"] = None
+
+    # limpa linhas vazias
+    df = df[df["sample_name"].astype(str).str.strip() != ""]
+    df = df.reset_index(drop=True)
+    return df[["sample_name", "description", "category_id"]]
+
 # -------------------------------------------------------
-# ABA 1 - AMOSTRAS
+# ABAS
 # -------------------------------------------------------
 tab1, tab2, tab3 = st.tabs(["1️⃣ Amostras", "2️⃣ Ensaios", "3️⃣ Otimização (IA)"])
 
+# -------------------------------------------------------
+# ABA 1 - AMOSTRAS
+# -------------------------------------------------------
 with tab1:
     st.header("📋 Cadastro e Visualização de Amostras")
 
-    # --- Carregar amostras existentes ---
     df_samples = load_samples()
 
     # --- Cadastro manual ---
@@ -88,51 +147,32 @@ with tab1:
 
     st.divider()
 
-  # --- Cadastro por arquivo ---
-st.subheader("📂 Importar lista de amostras (.csv, .xlsx ou .txt)")
-uploaded = st.file_uploader("Selecione o arquivo de amostras", type=["csv", "xlsx", "txt"])
+    # --- Cadastro por arquivo (agora aceita csv/xls/xlsx/txt) ---
+    st.subheader("📂 Importar lista de amostras (.csv, .xls/.xlsx ou .txt)")
+    uploaded = st.file_uploader("Selecione o arquivo de amostras", type=["csv", "xls", "xlsx", "txt"])
 
-if uploaded:
-    try:
-        # Detecta o formato automaticamente
-        if uploaded.name.endswith(".xlsx"):
-            df_new = pd.read_excel(uploaded)
-        elif uploaded.name.endswith(".csv"):
-            df_new = pd.read_csv(uploaded)
-        elif uploaded.name.endswith(".txt"):
-            df_new = pd.read_csv(uploaded, sep="\t", header=0)
-        else:
-            st.error("❌ Formato de arquivo não suportado. Use .csv, .xlsx ou .txt.")
-            st.stop()
-
-        # Padroniza os nomes das colunas
-        df_new.columns = [c.lower().strip() for c in df_new.columns]
-
-        if "sample_name" not in df_new.columns:
-            st.error("❌ O arquivo precisa conter uma coluna chamada 'sample_name'.")
-        else:
+    if uploaded:
+        try:
+            df_new = read_samples_file(uploaded)
+            st.write("Pré-visualização:")
             st.dataframe(df_new.head())
 
             if st.button("Cadastrar amostras em lote"):
                 inserted = 0
                 for _, row in df_new.iterrows():
-                    payload = {"sample_name": str(row["sample_name"]).strip()}
-                    if "description" in df_new.columns and not pd.isna(row["description"]):
-                        payload["description"] = str(row["description"])
-                    if "category_id" in df_new.columns and not pd.isna(row["category_id"]):
-                        payload["category_id"] = int(row["category_id"])
-
                     try:
-                        supabase.table("samples").insert(payload).execute()
+                        insert_sample(row["sample_name"], row.get("description"), row.get("category_id"))
                         inserted += 1
                     except Exception as e:
-                        st.warning(f"Erro ao inserir '{payload['sample_name']}': {e}")
+                        st.warning(f"Erro ao inserir '{row['sample_name']}': {e}")
 
                 st.success(f"✅ {inserted} amostras cadastradas com sucesso!")
                 df_samples = load_samples()
 
-    except Exception as e:
-        st.error(f"Erro ao ler arquivo: {e}")
+        except Exception as e:
+            st.error(f"Erro ao ler arquivo: {e}")
+
+    st.divider()
 
     # --- Exibir amostras cadastradas ---
     st.subheader("📋 Amostras existentes")
@@ -160,13 +200,19 @@ with tab2:
             try:
                 if tipo == "Raman":
                     # --- Processamento Raman ---
-                    filename = uploaded_file.name
+                    filename = uploaded_file.name.lower()
                     if filename.endswith(".xls") or filename.endswith(".xlsx"):
                         df = pd.read_excel(uploaded_file)
                     elif filename.endswith(".csv"):
-                        df = pd.read_csv(uploaded_file)
+                        try:
+                            df = pd.read_csv(uploaded_file)
+                        except Exception:
+                            df = pd.read_csv(uploaded_file, sep=";")
                     elif filename.endswith(".txt"):
-                        df = pd.read_csv(uploaded_file, sep="\t", comment="#", names=["wavenumber_cm1", "intensity_a"], header=0)
+                        try:
+                            df = pd.read_csv(uploaded_file, sep=None, engine="python")
+                        except Exception:
+                            df = pd.read_csv(uploaded_file, sep="\t", header=0)
                     else:
                         raise ValueError("Formato não suportado.")
 
@@ -209,17 +255,17 @@ with tab2:
 
                 elif tipo == "4 Pontas":
                     # --- Processamento Resistividade ---
+                    # Aceita csv padrão; adapte aqui se seus arquivos 4p vierem em xlsx/txt
                     df = pd.read_csv(uploaded_file)
                     df.columns = [c.lower().strip() for c in df.columns]
                     if "current_a" not in df.columns:
-                        df.rename(columns={"corrente": "current_a"}, inplace=True)
+                        df.rename(columns={"corrente": "current_a", "i": "current_a"}, inplace=True)
                     if "voltage_v" not in df.columns:
-                        df.rename(columns={"tensao": "voltage_v"}, inplace=True)
+                        df.rename(columns={"tensao": "voltage_v", "v": "voltage_v"}, inplace=True)
 
                     df = df.dropna(subset=["current_a", "voltage_v"])
                     df = df[(df["current_a"] > 0) & (df["voltage_v"] >= 0)]
 
-                    # Cálculo da resistência média
                     df["resistance_ohm"] = df["voltage_v"] / df["current_a"]
                     R_med = df["resistance_ohm"].mean()
 
@@ -240,11 +286,16 @@ with tab2:
 
                 elif tipo == "Ângulo de Contato":
                     # --- Processamento Tensiometria ---
-                    df = pd.read_csv(uploaded_file, delim_whitespace=True, comment="#")
+                    # Autodetect de separador para .txt também
+                    try:
+                        df = pd.read_csv(uploaded_file, sep=None, engine="python")
+                    except Exception:
+                        df = pd.read_csv(uploaded_file, delim_whitespace=True, comment="#")
+
                     df.columns = [c.lower().strip() for c in df.columns]
-                    if "mean" in df.columns:
+                    if "mean" in df.columns and "angle_mean_deg" not in df.columns:
                         df.rename(columns={"mean": "angle_mean_deg"}, inplace=True)
-                    if "time" in df.columns:
+                    if "time" in df.columns and "t_seconds" not in df.columns:
                         df.rename(columns={"time": "t_seconds"}, inplace=True)
 
                     df = df.dropna(subset=["t_seconds", "angle_mean_deg"])
