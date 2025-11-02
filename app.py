@@ -65,7 +65,7 @@ def insert_rows(table, rows):
 # -------------------------------------------------------
 # ABA 1 - AMOSTRAS
 # -------------------------------------------------------
-tab1, tab2, tab3 = st.tabs(["1️⃣ Amostras", "2️⃣ Ensaios Raman", "3️⃣ Otimização (IA)"])
+tab1, tab2, tab3 = st.tabs(["1️⃣ Amostras", "2️⃣ Ensaios", "3️⃣ Otimização (IA)"])
 
 with tab1:
     st.header("📋 Cadastro e Visualização de Amostras")
