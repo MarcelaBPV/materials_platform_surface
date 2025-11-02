@@ -1,5 +1,3 @@
-# app.py
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -12,34 +10,22 @@ import ramanchada2 as rc2
 import pickle, io
 
 # -------------------------------------------------------
-
 # CONFIGURAÇÃO GERAL
-
 # -------------------------------------------------------
-
 st.set_page_config(page_title="Plataforma de Caracterização", layout="wide")
 st.title("🔬 Plataforma de Caracterização de Superfícies")
 
 # -------------------------------------------------------
-
 # CONEXÃO SUPABASE
-
 # -------------------------------------------------------
-
 @st.cache_resource
 def init_connection() -> Client:
-url = st.secrets["SUPABASE_URL"]
-key = st.secrets["SUPABASE_KEY"]
-return create_client(url, key)
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
 supabase = init_connection()
 
-try:
-res = supabase.table("samples").select("id").limit(3).execute()
-st.sidebar.success("✅ Conectado ao Supabase!")
-except Exception as e:
-st.sidebar.error(f"Erro ao conectar Supabase: {e}")
-st.stop()
 
 # -------------------------------------------------------
 
