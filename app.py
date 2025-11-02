@@ -35,8 +35,8 @@ return create_client(url, key)
 supabase = init_connection()
 
 try:
-res = supabase.table("samples").select("*").limit(3).execute()
-st.sidebar.success(f"✅ Conectado ao Supabase ({len(res.data)} amostras encontradas)")
+res = supabase.table("samples").select("id").limit(3).execute()
+st.sidebar.success("✅ Conectado ao Supabase!")
 except Exception as e:
 st.sidebar.error(f"Erro ao conectar Supabase: {e}")
 st.stop()
@@ -49,12 +49,14 @@ st.stop()
 
 @st.cache_data(ttl=300)
 def load_samples():
-data = supabase.table("samples").select("id, sample_name, description, created_at").execute()
+"""Carrega todas as amostras existentes"""
+data = supabase.table("samples").select("id, sample_name, description, category_id, created_at").execute()
 if not data.data:
-return pd.DataFrame(columns=["id", "sample_name", "description", "created_at"])
+return pd.DataFrame(columns=["id", "sample_name", "description", "category_id", "created_at"])
 return pd.DataFrame(data.data)
 
-def insert_sample(name, desc=None, category_id=None):
+def insert_sample(name: str, desc: str = None, category_id=None):
+"""Insere nova amostra na tabela samples"""
 payload = {"sample_name": str(name).strip()}
 if desc and not pd.isna(desc):
 payload["description"] = str(desc)
@@ -63,22 +65,25 @@ try:
 payload["category_id"] = int(category_id)
 except Exception:
 pass
-supabase.table("samples").insert(payload).execute()
+return supabase.table("samples").insert(payload).execute()
 
-def get_measurement_id(sample_id, exp_type):
+def get_or_create_measurement(sample_id: int, exp_type: str):
+"""Retorna o measurement_id da amostra e tipo; cria se não existir"""
 meas = supabase.table("measurements").select("id").eq("sample_id", sample_id).eq("type", exp_type).limit(1).execute()
 if meas.data:
 return meas.data[0]["id"]
 new_meas = supabase.table("measurements").insert({"sample_id": sample_id, "type": exp_type}).execute()
 return new_meas.data[0]["id"]
 
-def insert_rows(table, rows):
+def insert_rows(table: str, rows: list):
+"""Insere várias linhas em uma tabela"""
 if not rows:
 return 0
 supabase.table(table).insert(rows).execute()
 return len(rows)
 
-def read_samples_file(uploaded) -> pd.DataFrame:
+def read_samples_file(uploaded):
+"""Lê arquivo de amostras (.csv, .xlsx, .txt)"""
 name = uploaded.name.lower()
 if name.endswith(".xlsx") or name.endswith(".xls"):
 df = pd.read_excel(uploaded)
@@ -93,12 +98,12 @@ df = pd.read_csv(uploaded, sep=None, engine="python")
 except Exception:
 df = pd.read_csv(uploaded, sep="\t", header=0)
 else:
-raise ValueError("Formato não suportado. Use .csv, .xlsx/.xls ou .txt")
+raise ValueError("Formato não suportado. Use .csv, .xlsx ou .txt")
 
 ```
 df.columns = [c.lower().strip() for c in df.columns]
 if "sample_name" not in df.columns:
-    raise ValueError("O arquivo precisa ter a coluna 'sample_name'.")
+    raise ValueError("O arquivo precisa ter uma coluna 'sample_name'.")
 if "description" not in df.columns:
     df["description"] = None
 if "category_id" not in df.columns:
@@ -122,11 +127,10 @@ tab1, tab2, tab3 = st.tabs(["1️⃣ Amostras", "2️⃣ Ensaios", "3️⃣ Otim
 
 with tab1:
 st.header("📋 Cadastro e Visualização de Amostras")
-
-```
 df_samples = load_samples()
 
-# --- Cadastro manual ---
+```
+# Cadastro manual
 st.subheader("Cadastrar manualmente")
 new_name = st.text_input("Nome da amostra")
 new_desc = st.text_area("Descrição (opcional)")
@@ -140,20 +144,18 @@ if st.button("Cadastrar amostra individual"):
 
 st.divider()
 
-# --- Cadastro por arquivo ---
-st.subheader("📂 Importar lista de amostras (.csv, .xls/.xlsx ou .txt)")
+# Upload de arquivo de amostras
+st.subheader("📂 Importar lista de amostras (.csv, .xlsx, .txt)")
 uploaded = st.file_uploader("Selecione o arquivo de amostras", type=["csv", "xls", "xlsx", "txt"])
 
 if uploaded:
     try:
         df_new = read_samples_file(uploaded)
-
-        # Detecta tentativa de enviar dados de ensaio
         if any(col in df_new.columns for col in ["wavenumber_cm1", "intensity_a"]):
-            st.error("⚠️ Este arquivo parece conter dados de ensaio (Raman, etc.). Use a **aba 2 – Ensaios**.")
+            st.error("⚠️ Este arquivo contém dados de ensaio. Use a **aba 2 – Ensaios**.")
             st.stop()
-
         st.dataframe(df_new.head())
+
         if st.button("Cadastrar amostras em lote"):
             inserted = 0
             for _, row in df_new.iterrows():
@@ -170,6 +172,7 @@ if uploaded:
 
 st.divider()
 
+# Exibe amostras cadastradas
 st.subheader("📋 Amostras existentes")
 if df_samples.empty:
     st.info("Nenhuma amostra encontrada.")
@@ -185,7 +188,7 @@ else:
 
 with tab2:
 st.header("🧪 Processamento de Ensaios")
-st.markdown("A amostra é criada automaticamente se ainda não existir.")
+st.markdown("Informe o nome da amostra. Se não existir, será criada automaticamente no Supabase.")
 
 ```
 sample_name = st.text_input("🔖 Nome da amostra (ex: BloodPaper_785_1200_1_5_10)")
@@ -194,33 +197,26 @@ uploaded_file = st.file_uploader("📂 Carregar arquivo do ensaio", type=["txt",
 
 if uploaded_file and sample_name:
     try:
-        # Verifica se a amostra já existe
+        # Verifica/cria amostra
         existing = supabase.table("samples").select("id").eq("sample_name", sample_name).execute()
         if existing.data:
             sample_id = existing.data[0]["id"]
             st.info(f"Amostra **{sample_name}** já cadastrada (id={sample_id}).")
         else:
-            resp = supabase.table("samples").insert({"sample_name": sample_name}).execute()
+            resp = insert_sample(sample_name)
             sample_id = resp.data[0]["id"]
-            st.success(f"Amostra **{sample_name}** criada no Supabase!")
+            st.success(f"Amostra **{sample_name}** criada com sucesso!")
 
         # Raman
         if tipo == "Raman":
-            filename = uploaded_file.name.lower()
-            if filename.endswith(".xls") or filename.endswith(".xlsx"):
+            # Leitura
+            name = uploaded_file.name.lower()
+            if name.endswith(".xlsx") or name.endswith(".xls"):
                 df = pd.read_excel(uploaded_file)
-            elif filename.endswith(".csv"):
-                try:
-                    df = pd.read_csv(uploaded_file)
-                except Exception:
-                    df = pd.read_csv(uploaded_file, sep=";")
-            elif filename.endswith(".txt"):
-                try:
-                    df = pd.read_csv(uploaded_file, sep=None, engine="python")
-                except Exception:
-                    df = pd.read_csv(uploaded_file, sep="\t", header=0)
+            elif name.endswith(".csv"):
+                df = pd.read_csv(uploaded_file)
             else:
-                raise ValueError("Formato não suportado.")
+                df = pd.read_csv(uploaded_file, sep=None, engine="python")
 
             df.columns = [c.lower().strip() for c in df.columns]
             if "wavenumber_cm1" not in df.columns and "wavenumber" in df.columns:
@@ -235,26 +231,21 @@ if uploaded_file and sample_name:
             s_corr = s.remove_baseline().smooth().normalize()
             peaks = s_corr.find_peaks(threshold_rel=0.05)
 
-            st.subheader("📄 Dados originais")
-            st.dataframe(df.head())
-            norm_df = pd.DataFrame({"wavenumber_cm1": s_corr.x, "normalized_intensity": s_corr.y})
-            st.subheader("📈 Dados normalizados")
-            st.dataframe(norm_df.head())
-
+            st.subheader("📈 Espectro Raman Normalizado")
             fig, ax = plt.subplots()
-            s_corr.plot(ax=ax, label="Normalizado")
-            peaks.plot(ax=ax, marker="o", color="r", label="Picos")
+            s_corr.plot(ax=ax)
+            peaks.plot(ax=ax, marker="o", color="r")
             ax.set_xlabel("Número de onda (cm⁻¹)")
             ax.set_ylabel("Intensidade (a.u.)")
-            ax.legend()
             ax.invert_xaxis()
             st.pyplot(fig)
 
-            mid = get_measurement_id(sample_id, "raman")
+            mid = get_or_create_measurement(sample_id, "raman")
             rows = [{"measurement_id": mid, "wavenumber_cm1": float(x), "intensity_a": float(y)} for x, y in zip(s_corr.x, s_corr.y)]
             insert_rows("raman_spectra", rows)
             st.success(f"{len(rows)} pontos Raman vinculados à amostra '{sample_name}'.")
 
+        # 4 Pontas
         elif tipo == "4 Pontas":
             df = pd.read_csv(uploaded_file)
             df.columns = [c.lower().strip() for c in df.columns]
@@ -264,53 +255,47 @@ if uploaded_file and sample_name:
                 df.rename(columns={"tensao": "voltage_v", "v": "voltage_v"}, inplace=True)
 
             df = df.dropna(subset=["current_a", "voltage_v"])
-            df = df[(df["current_a"] > 0) & (df["voltage_v"] >= 0)]
             df["resistance_ohm"] = df["voltage_v"] / df["current_a"]
-            R_med = df["resistance_ohm"].mean()
 
             fig, ax = plt.subplots()
-            ax.scatter(df["current_a"], df["voltage_v"], label="Dados experimentais")
-            ax.plot(df["current_a"], df["current_a"] * R_med, "r-", label=f"Ajuste linear (R={R_med:.2f} Ω)")
+            ax.scatter(df["current_a"], df["voltage_v"], label="Dados")
+            ax.plot(df["current_a"], df["current_a"] * df["resistance_ohm"].mean(), "r-", label="Ajuste médio")
             ax.set_xlabel("Corrente (A)")
             ax.set_ylabel("Tensão (V)")
             ax.legend()
             st.pyplot(fig)
 
-            mid = get_measurement_id(sample_id, "4_pontas")
+            mid = get_or_create_measurement(sample_id, "4_pontas")
             rows = df.to_dict(orient="records")
             for r in rows:
                 r["measurement_id"] = mid
             insert_rows("four_point_probe_points", rows)
-            st.success(f"{len(rows)} pontos 4 Pontas vinculados à amostra '{sample_name}'.")
+            st.success(f"{len(rows)} pontos 4 Pontas inseridos.")
 
+        # Ângulo de Contato
         elif tipo == "Ângulo de Contato":
-            try:
-                df = pd.read_csv(uploaded_file, sep=None, engine="python")
-            except Exception:
-                df = pd.read_csv(uploaded_file, delim_whitespace=True, comment="#")
-
+            df = pd.read_csv(uploaded_file, sep=None, engine="python")
             df.columns = [c.lower().strip() for c in df.columns]
-            if "mean" in df.columns and "angle_mean_deg" not in df.columns:
+            if "mean" in df.columns:
                 df.rename(columns={"mean": "angle_mean_deg"}, inplace=True)
-            if "time" in df.columns and "t_seconds" not in df.columns:
+            if "time" in df.columns:
                 df.rename(columns={"time": "t_seconds"}, inplace=True)
 
             df = df.dropna(subset=["t_seconds", "angle_mean_deg"])
-            df = df[(df["angle_mean_deg"] >= 0) & (df["angle_mean_deg"] <= 180)]
 
             fig, ax = plt.subplots()
-            ax.plot(df["t_seconds"], df["angle_mean_deg"], "bo-", label="Ângulo de contato")
+            ax.plot(df["t_seconds"], df["angle_mean_deg"], "bo-", label="Ângulo")
             ax.set_xlabel("Tempo (s)")
             ax.set_ylabel("Ângulo (°)")
             ax.legend()
             st.pyplot(fig)
 
-            mid = get_measurement_id(sample_id, "tensiometria")
+            mid = get_or_create_measurement(sample_id, "tensiometria")
             rows = df.to_dict(orient="records")
             for r in rows:
                 r["measurement_id"] = mid
             insert_rows("contact_angle_points", rows)
-            st.success(f"{len(rows)} pontos de ângulo vinculados à amostra '{sample_name}'.")
+            st.success(f"{len(rows)} pontos de ângulo inseridos.")
 
     except Exception as e:
         st.error(f"Erro ao processar arquivo: {e}")
@@ -318,83 +303,41 @@ if uploaded_file and sample_name:
 
 # -------------------------------------------------------
 
-# ABA 3 - OTIMIZAÇÃO (IA) - APENAS RAMAN
+# ABA 3 - OTIMIZAÇÃO (IA)
 
 # -------------------------------------------------------
 
 with tab3:
 st.header("🤖 Otimização via Machine Learning (Random Forest)")
-st.markdown("Treina um modelo IA apenas para **Raman**, aprendendo padrões e criando uma assinatura molecular.")
+st.markdown("Treina modelo IA apenas para dados **Raman** armazenados no Supabase.")
 
 ```
-model_path = "models/raman_model.pkl"
-
 try:
     data = supabase.table("raman_spectra").select("wavenumber_cm1, intensity_a").execute()
     if not data.data:
         st.warning("Nenhum dado Raman disponível.")
         st.stop()
 
-    df = pd.DataFrame(data.data).dropna()
-    X = df[["wavenumber_cm1"]].values
-    y = df["intensity_a"].values
+    df = pd.DataFrame(data.data)
+    X, y = df[["wavenumber_cm1"]].values, df["intensity_a"].values
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Verifica modelo salvo
-    model_exists = False
-    try:
-        res = supabase.storage.from_("models").download("raman_model.pkl")
-        model_file = io.BytesIO(res)
-        model = pickle.load(model_file)
-        model_exists = True
-        st.success("📦 Modelo carregado do Supabase Storage!")
-    except Exception:
-        st.info("Nenhum modelo salvo encontrado. Será treinado um novo.")
+    model = RandomForestRegressor(n_estimators=200, random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
 
-    retrain = st.button("🔁 Re-treinar modelo IA")
+    st.success("✅ Modelo treinado com sucesso!")
+    st.write(f"R² = {r2_score(y_test, y_pred):.3f}")
+    st.write(f"MAE = {mean_absolute_error(y_test, y_pred):.3f}")
+    st.write(f"RMSE = {np.sqrt(mean_squared_error(y_test, y_pred)):.3f}")
 
-    if retrain or not model_exists:
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        model = RandomForestRegressor(n_estimators=200, random_state=42)
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-
-        r2 = r2_score(y_test, y_pred)
-        mae = mean_absolute_error(y_test, y_pred)
-        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-
-        st.success("✅ Modelo Random Forest treinado com sucesso!")
-        st.write(f"**R²:** {r2:.3f}")
-        st.write(f"**MAE:** {mae:.3f}")
-        st.write(f"**RMSE:** {rmse:.3f}")
-
-        buf = io.BytesIO()
-        pickle.dump(model, buf)
-        buf.seek(0)
-        supabase.storage.from_("models").upload("raman_model.pkl", buf, {"content-type": "application/octet-stream"})
-        st.info("💾 Modelo salvo no Supabase Storage!")
-
-    st.subheader("🔍 Prever intensidade Raman")
-    wnum = st.number_input("Digite número de onda (cm⁻¹):", min_value=0.0, step=10.0)
-    if st.button("Prever intensidade"):
-        pred = model.predict(np.array([[wnum]]))[0]
-        st.info(f"Intensidade prevista: **{pred:.2f} a.u.**")
-
-    st.subheader("🔬 Picos e grupos moleculares")
-    known_groups = {
-        1000: "Fenilalanina (anel aromático)",
-        1250: "Amidas (proteínas)",
-        1600: "C=C (lipídios)",
-        1650: "Amida I (proteína)"
-    }
-
-    detected_peaks = df.loc[df["intensity_a"] > np.percentile(df["intensity_a"], 98), "wavenumber_cm1"].round().unique()
-    detected_peaks.sort()
-    result_table = []
-    for p in detected_peaks:
-        group = known_groups.get(int(p), "Desconhecido")
-        result_table.append({"Pico (cm⁻¹)": p, "Grupo Molecular": group})
-
-    st.dataframe(pd.DataFrame(result_table))
+    fig, ax = plt.subplots()
+    ax.scatter(X_test, y_test, label="Real")
+    ax.scatter(X_test, y_pred, label="Previsto", alpha=0.7)
+    ax.set_xlabel("Número de onda (cm⁻¹)")
+    ax.set_ylabel("Intensidade (a.u.)")
+    ax.legend()
+    st.pyplot(fig)
 
 except Exception as e:
     st.error(f"Erro na otimização: {e}")
